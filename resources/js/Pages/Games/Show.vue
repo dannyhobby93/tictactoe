@@ -20,7 +20,11 @@
 
         <ul class="max-w-sm mx-auto mt-6 space-y-2">
             <li class="flex items-center gap-2">
-                <span class="p-1.5 font-bold rounded bg-gray-200">X</span>
+                <span
+                    class="p-1.5 font-bold rounded bg-gray-200"
+                    :class="{ 'bg-green-200': xTurn }"
+                    >X</span
+                >
                 <span>{{ game.player_one.name }}</span>
                 <span
                     :class="{
@@ -32,7 +36,11 @@
                 ></span>
             </li>
             <li v-if="game.player_two" class="flex items-center gap-2">
-                <span class="p-1.5 font-bold rounded bg-gray-200">O</span>
+                <span
+                    class="p-1.5 font-bold rounded bg-gray-200"
+                    :class="{ 'bg-green-200': !xTurn }"
+                    >O</span
+                >
                 <span>{{ game.player_two.name }}</span>
                 <span
                     :class="{
@@ -80,17 +88,24 @@ import { computed, onUnmounted, ref } from "vue";
 import Modal from "@/Components/Modal.vue";
 import PrimaryButton from "@/Components/PrimaryButton.vue";
 import { useGameState, gameStates } from "@/Composables/useGameState.js";
-import { router } from "@inertiajs/vue3";
+import { router, usePage } from "@inertiajs/vue3";
 
 const props = defineProps(["game"]);
 
-const boardState = ref([0, 0, 0, 0, 0, 0, 0, 0, 0]);
+const boardState = ref(props.game.state ?? [0, 0, 0, 0, 0, 0, 0, 0, 0]);
 const gameState = useGameState();
 const players = ref([]);
 
+const page = usePage();
 const xTurn = computed(
     () => boardState.value.reduce((carry, value) => carry + value, 0) === 0
 );
+const yourTurn = computed(() => {
+    if (props.game.player_one_id === page.props.auth.user.id) {
+        return xTurn.value;
+    }
+    return !xTurn.value;
+});
 
 const lines = [
     // rows
@@ -107,7 +122,15 @@ const lines = [
 ];
 
 const fillSquare = (index) => {
+    if (!yourTurn.value) {
+        return;
+    }
+
     boardState.value[index] = xTurn.value ? -1 : 1;
+
+    router.put(route("games.update", props.game.id), {
+        state: boardState.value,
+    });
 
     checkForVictory();
 };
@@ -131,12 +154,18 @@ const checkForVictory = () => {
 
     if (!boardState.value.includes(0)) {
         gameState.change(gameStates.Stalemate);
+        return;
     }
+    gameState.change(gameStates.inProgress);
 };
 
 const resetGame = () => {
     boardState.value = [0, 0, 0, 0, 0, 0, 0, 0, 0];
     gameState.change(gameStates.InProgress);
+
+    router.put(route("games.update", props.game.id), {
+        state: boardState.value,
+    });
 };
 
 Echo.join(`games.${props.game.id}`)
@@ -149,7 +178,11 @@ Echo.join(`games.${props.game.id}`)
     .leaving(
         (user) =>
             (players.value = players.value.filter(({ id }) => id !== user.id))
-    );
+    )
+    .listen("PlayerMadeMove", ({ game }) => {
+        boardState.value = game.state;
+        checkForVictory();
+    });
 
 onUnmounted(() => {
     Echo.leave(`games.${props.game.id}`);
